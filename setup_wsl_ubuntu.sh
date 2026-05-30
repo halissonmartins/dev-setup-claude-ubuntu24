@@ -698,6 +698,15 @@ sudo apt install -y \
 # Add current user to docker group
 sudo usermod -aG docker "$USER"
 
+# Also add the pre-created 'dev' user to the docker group ('dev' is created
+# before this script runs). Guarded so it is a no-op if the user does not exist.
+if id "dev" &>/dev/null; then
+  sudo usermod -aG docker dev
+  success "User 'dev' added to the docker group."
+else
+  warn "User 'dev' not found — skipping docker group membership for 'dev'."
+fi
+
 # Autostart in WSL (WSL does not use systemd by default)
 # Enable systemd if available; otherwise use /etc/wsl.conf + service start trick
 if systemctl is-system-running --quiet 2>/dev/null; then
