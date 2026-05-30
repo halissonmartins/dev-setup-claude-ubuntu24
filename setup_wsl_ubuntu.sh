@@ -538,6 +538,10 @@ npm install -g @anthropic-ai/claude-code
               /usr/local/bin/claude 2>/dev/null || true
 check_tool "claude" "claude --version"
 
+# ── Define the CLAUDE.md generator here, but DO NOT run it yet. ───────────────
+# It is invoked LATER (section 23), after every tool has been installed, so the
+# version strings it embeds are captured live and are always accurate.
+generate_claude_md() {
 CLAUDE_SETTINGS_DIR="${REAL_HOME}/.claude"
 mkdir -p "$CLAUDE_SETTINGS_DIR"
 
@@ -583,6 +587,14 @@ _tslsp_ver=$(typescript-language-server --version 2>/dev/null || echo "not found
 # jdtls starts a daemon and blocks — extract version from the jar filename instead
 _jdtls_ver=$(find /opt/jdtls/plugins -name "org.eclipse.jdt.ls.core_*.jar" 2>/dev/null \
   | head -1 | grep -oP "(?<=core_)[0-9]+\.[0-9]+\.[0-9]+" || echo "not found")
+_tsc_ver=$(tsc        --version 2>/dev/null || echo "not found")
+_zip_ver=$(zip        --version 2>/dev/null | sed -n "s/^This is \(Zip [0-9.]*\).*/\1/p" || echo "not found")
+_shellcheck_ver=$(shellcheck --version 2>/dev/null | grep "version:" || echo "not found")
+_psql_ver=$(psql      --version 2>/dev/null || echo "not found")
+_k6_ver=$(k6          version 2>/dev/null | head -1 || echo "not found")
+_kafka_ver=$(kafka-topics.sh --version 2>/dev/null | head -1 || echo "not found")
+_playwright_ver=$(playwright --version 2>/dev/null || echo "not found")
+_openspec_ver=$(openspec --version 2>/dev/null || echo "not found")
 _install_date=$(date "+%Y-%m-%d")
 
 if [[ -f "$CLAUDE_MD_FILE" ]]; then
@@ -626,20 +638,16 @@ It describes the tools installed in this environment so you never need to ask.
 | claude (Claude Code) | ${_claude_ver} | |
 | vtsls | ${_vtsls_ver} | TypeScript LSP for Claude Code |
 | typescript-language-server | ${_tslsp_ver} | TypeScript LSP (editors) |
-| tsc (TypeScript) | installed | TypeScript compiler — global npm |
+| tsc (TypeScript) | ${_tsc_ver} | TypeScript compiler — global npm |
 | jdtls | ${_jdtls_ver} | Java LSP — Eclipse JDT |
-| specify (GitHub Spec Kit) | installed | via uvx (git+spec-kit) — 'specify init <PROJECT>' |
-| zip / unzip | installed | archive utilities (apt) |
-| shellcheck | installed | shell script linter (apt) |
-| psql | installed | PostgreSQL client (PGDG repo) |
-| k6 | installed | load testing CLI (Grafana repo) |
-| kafka-topics.sh (Kafka CLI) | installed | Apache Kafka CLI tools at /opt/kafka (KAFKA_HOME) |
-| playwright | installed | E2E browser automation CLI + Chromium |
-| openspec | installed | OpenSpec CLI — run 'openspec init' (select Claude Code) per project |
-
-> Versions for the tools marked "installed" are confirmed at the end of the
-> install run (Final Verification Summary), since they are set up after this file
-> is generated.
+| specify (GitHub Spec Kit) | installed (uvx) | via uvx (git+spec-kit) — 'specify init <PROJECT>' |
+| zip | ${_zip_ver} | archive utilities (apt; unzip also installed) |
+| shellcheck | ${_shellcheck_ver} | shell script linter (apt) |
+| psql | ${_psql_ver} | PostgreSQL client (PGDG repo) |
+| k6 | ${_k6_ver} | load testing CLI (Grafana repo) |
+| kafka-topics.sh (Kafka CLI) | ${_kafka_ver} | Apache Kafka CLI tools at /opt/kafka (KAFKA_HOME) |
+| playwright | ${_playwright_ver} | E2E browser automation CLI + Chromium |
+| openspec | ${_openspec_ver} | OpenSpec CLI — run 'openspec init' (select Claude Code) per project |
 
 ## MCP servers (Claude Code, user scope)
 
@@ -677,6 +685,7 @@ CLAUDEEOF
   success "CLAUDE.md written: ${CLAUDE_MD_FILE}"
   log "  This file is auto-loaded by Claude Code in every session."
 fi
+}
 
 # =============================================================================
 # 12. DOCKER + DOCKER COMPOSE + AUTOSTART
@@ -1108,6 +1117,26 @@ sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp add --scope user \
   || warn "MCP 'playwright' already registered or registration failed (non-fatal)."
 
 sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp list 2>/dev/null || true
+
+# =============================================================================
+# 23. GLOBAL CLAUDE.md (generated AFTER all tools are installed)
+# =============================================================================
+section "23. Global CLAUDE.md"
+
+# Now that every tool (sections 1–22) is installed, generate the global
+# CLAUDE.md. Re-assert the full PATH first so each freshly installed tool
+# resolves and its LIVE version is captured inside generate_claude_md().
+export NVM_DIR="/opt/nvm"
+set +eu
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+set -eu
+export PATH="/usr/local/bin:$PATH"
+[ -n "${JAVA_HOME:-}" ]  && export PATH="$JAVA_HOME/bin:$PATH"
+[ -n "${MAVEN_HOME:-}" ] && export PATH="$MAVEN_HOME/bin:$PATH"
+[ -d /opt/kafka/bin ]    && export KAFKA_HOME=/opt/kafka && export PATH="/opt/kafka/bin:$PATH"
+
+generate_claude_md
 
 # =============================================================================
 # FINAL VERIFICATION SUMMARY
