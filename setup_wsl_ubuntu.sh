@@ -626,7 +626,9 @@ It describes the tools installed in this environment so you never need to ask.
 | claude (Claude Code) | ${_claude_ver} | |
 | vtsls | ${_vtsls_ver} | TypeScript LSP for Claude Code |
 | typescript-language-server | ${_tslsp_ver} | TypeScript LSP (editors) |
+| tsc (TypeScript) | installed | TypeScript compiler — global npm |
 | jdtls | ${_jdtls_ver} | Java LSP — Eclipse JDT |
+| specify (GitHub Spec Kit) | installed | via uvx (git+spec-kit) — 'specify init <PROJECT>' |
 | zip / unzip | installed | archive utilities (apt) |
 | shellcheck | installed | shell script linter (apt) |
 | psql | installed | PostgreSQL client (PGDG repo) |
@@ -660,6 +662,9 @@ It describes the tools installed in this environment so you never need to ask.
 - Build Java project: \`mvn clean install\`
 - Start Docker service: \`sudo service docker start\`
 - Open Chrome (WSLg): \`chrome\`
+- Init GitHub Spec Kit: \`uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>\`
+- Init OpenSpec (per project): \`openspec init\` (select Claude Code)
+- Run a k6 load test: \`k6 run script.js\`
 
 ## Preferences
 
