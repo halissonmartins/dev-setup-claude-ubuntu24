@@ -6,7 +6,11 @@
 #   System update, Python (latest), PIP, Node.js (LTS), Angular CLI,
 #   Next.js, React (create-react-app), OpenJDK 25, Maven (latest),
 #   GitHub CLI, Git, Claude Code, Docker + Compose, Chrome (WSLg),
-#   Postman CLI, GitHub Spec Kit (specify CLI via uvx)
+#   Postman CLI, GitHub Spec Kit (specify CLI via uvx),
+#   ZIP, ShellCheck, PostgreSQL client (PGDG), k6 (load testing),
+#   Kafka CLI (Apache), Playwright CLI + Chromium, OpenSpec CLI,
+#   Chrome DevTools MCP server, and MCP servers registered into Claude
+#   (chrome-devtools + playwright, user scope)
 # =============================================================================
 
 set -euo pipefail
@@ -106,6 +110,15 @@ check_url "GitHub Spec Kit (PyPI/git)"         "https://github.com/github/spec-k
 check_url "uv installer (for Spec Kit)"        "https://astral.sh/uv/install.sh"
 check_url "TypeScript LSP (vtsls npm)"         "https://registry.npmjs.org/@vtsls/language-server"
 check_url "Java LSP (jdtls snapshot)"          "http://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz"
+check_url "PostgreSQL PGDG signing key"        "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+check_url "PostgreSQL PGDG apt repo"           "https://apt.postgresql.org/pub/repos/apt/"
+check_url "Grafana k6 GPG key"                 "https://dl.k6.io/key.gpg"
+check_url "Grafana k6 apt repo"                "https://dl.k6.io/deb/"
+check_url "Apache Kafka CDN"                   "https://dlcdn.apache.org/kafka/"
+check_url "Playwright (npm)"                   "https://registry.npmjs.org/playwright"
+check_url "Playwright MCP (npm)"               "https://registry.npmjs.org/@playwright/mcp"
+check_url "Chrome DevTools MCP (npm)"          "https://registry.npmjs.org/chrome-devtools-mcp"
+check_url "OpenSpec (npm)"                     "https://registry.npmjs.org/@fission-ai/openspec"
 
 # =============================================================================
 # 1. SYSTEM UPDATE & ESSENTIALS
@@ -118,7 +131,7 @@ sudo apt upgrade -y
 sudo apt install -y \
   curl wget gnupg ca-certificates \
   software-properties-common apt-transport-https \
-  build-essential git unzip tar lsb-release \
+  build-essential git unzip zip tar lsb-release shellcheck \
   libssl-dev zlib1g-dev libncurses5-dev libgdbm-dev \
   libnss3-dev libffi-dev libreadline-dev libsqlite3-dev libbz2-dev \
   libxss1 libxrandr2 libasound2t64 libpango-1.0-0 \
@@ -614,11 +627,29 @@ It describes the tools installed in this environment so you never need to ask.
 | vtsls | ${_vtsls_ver} | TypeScript LSP for Claude Code |
 | typescript-language-server | ${_tslsp_ver} | TypeScript LSP (editors) |
 | jdtls | ${_jdtls_ver} | Java LSP — Eclipse JDT |
+| zip / unzip | installed | archive utilities (apt) |
+| shellcheck | installed | shell script linter (apt) |
+| psql | installed | PostgreSQL client (PGDG repo) |
+| k6 | installed | load testing CLI (Grafana repo) |
+| kafka-topics.sh (Kafka CLI) | installed | Apache Kafka CLI tools at /opt/kafka (KAFKA_HOME) |
+| playwright | installed | E2E browser automation CLI + Chromium |
+| openspec | installed | OpenSpec CLI — run 'openspec init' (select Claude Code) per project |
+
+> Versions for the tools marked "installed" are confirmed at the end of the
+> install run (Final Verification Summary), since they are set up after this file
+> is generated.
+
+## MCP servers (Claude Code, user scope)
+
+- chrome-devtools — \`npx chrome-devtools-mcp@latest\` (Chrome DevTools automation)
+- playwright — \`npx @playwright/mcp@latest\` (Playwright browser automation)
+- Inspect with: \`claude mcp list\`
 
 ## Environment variables
 
 - JAVA_HOME: set — points to Eclipse Temurin JDK 25
 - MAVEN_HOME: /opt/maven
+- KAFKA_HOME: /opt/kafka  (Kafka CLI tools on PATH via /opt/kafka/bin)
 - NVM_DIR: /opt/nvm  (system-wide, accessible to all users)
 
 ## Key commands
@@ -883,6 +914,188 @@ log "  /plugin install vtsls@claude-code-lsps      (TypeScript/JavaScript)"
 log "  /plugin install jdtls@claude-code-lsps      (Java)"
 
 # =============================================================================
+# 17. POSTGRESQL CLIENT (psql) via official PGDG apt repository
+# =============================================================================
+section "17. PostgreSQL client (PGDG)"
+
+log "Adding PostgreSQL PGDG repository..."
+# Store the ASCII-armored signing key directly (apt accepts .asc with signed-by)
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+  https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+  | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+
+sudo apt update -y
+# postgresql-client is a metapackage that pulls the latest client (psql) version
+sudo apt install -y postgresql-client
+
+check_tool "psql" "psql --version"
+
+# =============================================================================
+# 18. K6 (load testing CLI) via official Grafana apt repository
+# =============================================================================
+section "18. k6 (load testing CLI)"
+
+log "Adding Grafana k6 repository..."
+curl -fsSL https://dl.k6.io/key.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/k6.list > /dev/null
+
+sudo apt update -y
+sudo apt install -y k6
+
+check_tool "k6" "k6 version"
+
+# =============================================================================
+# 19. KAFKA CLI (Apache Kafka binary — command-line tools)
+# =============================================================================
+section "19. Kafka CLI (Apache)"
+
+# The Kafka CLI tools (kafka-topics.sh, kafka-console-producer.sh, etc.) ship
+# only inside the Apache Kafka binary distribution — there is no apt package for
+# just the CLI. We download the tarball to /opt/kafka and put its bin/ on PATH.
+# These scripts are JVM wrappers and rely on the already-installed JDK 25.
+KAFKA_SCALA="2.13"
+
+log "Fetching latest Kafka version number..."
+# Strategy 1: Apache CDN directory listing (primary source)
+KAFKA_VERSION=$(curl -fsSL --max-time 15 "https://dlcdn.apache.org/kafka/" 2>/dev/null \
+  | grep -oP '(?<=href=")[0-9]+\.[0-9]+\.[0-9]+(?=/)' \
+  | sort -V | tail -1)
+
+# Strategy 2: hard-coded known-good latest (last resort)
+if [[ -z "$KAFKA_VERSION" ]]; then
+  warn "Could not auto-detect Kafka version; using 4.1.0 as fallback"
+  KAFKA_VERSION="4.1.0"
+fi
+
+# Validate KAFKA_VERSION is a safe semver before using in URL/filename
+if [[ ! "$KAFKA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  warn "Kafka version '$KAFKA_VERSION' has unexpected format; falling back to 4.1.0"
+  KAFKA_VERSION="4.1.0"
+fi
+log "Installing Kafka $KAFKA_VERSION (Scala $KAFKA_SCALA) ..."
+
+KAFKA_TGZ="kafka_${KAFKA_SCALA}-${KAFKA_VERSION}.tgz"
+KAFKA_URL="https://dlcdn.apache.org/kafka/${KAFKA_VERSION}/${KAFKA_TGZ}"
+
+# Verify the CDN URL; if unavailable use archive mirror
+if ! curl -fsSL --max-time 10 --head "$KAFKA_URL" &>/dev/null; then
+  warn "Apache CDN unreachable; switching to archive.apache.org mirror..."
+  KAFKA_URL="https://archive.apache.org/dist/kafka/${KAFKA_VERSION}/${KAFKA_TGZ}"
+fi
+check_url "Kafka binary" "$KAFKA_URL"
+
+KAFKA_TMP=$(mktemp /tmp/kafka.XXXXXX.tgz)
+KAFKA_SHA_TMP=$(mktemp /tmp/kafka.XXXXXX.sha512)
+wget -qO "$KAFKA_TMP"     "$KAFKA_URL"
+wget -qO "$KAFKA_SHA_TMP" "${KAFKA_URL}.sha512"
+log "Verifying Kafka SHA512 checksum..."
+# Apache Kafka publishes the hash as "filename: <HASH split across lines>".
+# Strip the filename, colon, and ALL whitespace to recover the bare hash.
+EXPECTED_SHA=$(sed 's/^.*: *//' "$KAFKA_SHA_TMP" | tr -d "[:space:]" | tr "A-F" "a-f")
+ACTUAL_SHA=$(sha512sum "$KAFKA_TMP" | awk '{print $1}')
+if [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+  error "Kafka SHA512 mismatch! Aborting to prevent a corrupted install."
+  error "  Expected: $EXPECTED_SHA"
+  error "  Got:      $ACTUAL_SHA"
+  rm -f "$KAFKA_TMP" "$KAFKA_SHA_TMP"
+  record_fail "kafka"
+else
+  success "Kafka checksum verified."
+  rm -f "$KAFKA_SHA_TMP"
+  sudo rm -rf /opt/kafka
+  sudo mkdir -p /opt/kafka
+  sudo tar -xzf "$KAFKA_TMP" -C /opt/kafka --strip-components=1
+  rm -f "$KAFKA_TMP"
+
+  # Expose Kafka CLI tools system-wide via /etc/profile.d/devenv.sh
+  if ! grep -q 'KAFKA_HOME' /etc/profile.d/devenv.sh 2>/dev/null; then
+    sudo tee -a /etc/profile.d/devenv.sh > /dev/null <<'KAFKAENVEOF'
+export KAFKA_HOME=/opt/kafka
+export PATH=$KAFKA_HOME/bin:$PATH
+KAFKAENVEOF
+  fi
+
+  export KAFKA_HOME=/opt/kafka
+  export PATH="$KAFKA_HOME/bin:$PATH"
+  check_tool "kafka-topics.sh" "kafka-topics.sh --version"
+  log "KAFKA_HOME = $KAFKA_HOME (CLI tools: kafka-topics.sh, kafka-console-producer.sh, ...)"
+fi
+
+# =============================================================================
+# 20. PLAYWRIGHT CLI (+ Chromium browser)
+# =============================================================================
+section "20. Playwright CLI (+ Chromium)"
+
+# Ensure NVM is active in this subshell (suspend -eu: NVM has unbound vars)
+export NVM_DIR="/opt/nvm"
+set +eu
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+set -eu
+log "Installing playwright globally..."
+npm install -g playwright
+
+log "Installing Chromium browser + OS dependencies (via apt)..."
+# --with-deps installs the required system libraries using apt (needs root/sudo).
+# Only Chromium is fetched here to keep the download reasonable.
+playwright install --with-deps chromium
+
+check_tool "playwright" "playwright --version"
+
+# =============================================================================
+# 21. OPENSPEC CLI
+# =============================================================================
+section "21. OpenSpec CLI"
+
+# Ensure NVM is active in this subshell (suspend -eu: NVM has unbound vars)
+export NVM_DIR="/opt/nvm"
+set +eu
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+set -eu
+log "Installing @fission-ai/openspec globally..."
+npm install -g @fission-ai/openspec@latest
+check_tool "openspec" "openspec --version"
+log "Per project, run 'openspec init' (select 'Claude Code') to wire OpenSpec into Claude."
+
+# =============================================================================
+# 22. MCP SERVERS — Chrome DevTools + Playwright (registered into Claude)
+# =============================================================================
+section "22. MCP servers (chrome-devtools + playwright)"
+
+# Ensure NVM is active so node/npm/npx are available
+export NVM_DIR="/opt/nvm"
+set +eu
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+set -eu
+
+log "Installing Chrome DevTools MCP server globally..."
+npm install -g chrome-devtools-mcp
+
+# Register both MCP servers at USER scope so they are available in every project.
+# Run as REAL_USER with the right HOME so the config lands in REAL_HOME/.claude.json
+# (when the script runs directly as root, REAL_USER=root — consistent with the rest).
+log "Registering MCP servers into Claude (user scope)..."
+sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp add --scope user \
+  chrome-devtools npx chrome-devtools-mcp@latest 2>/dev/null \
+  && success "MCP 'chrome-devtools' registered (user scope)." \
+  || warn "MCP 'chrome-devtools' already registered or registration failed (non-fatal)."
+
+sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp add --scope user \
+  playwright npx @playwright/mcp@latest 2>/dev/null \
+  && success "MCP 'playwright' registered (user scope)." \
+  || warn "MCP 'playwright' already registered or registration failed (non-fatal)."
+
+sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp list 2>/dev/null || true
+
+# =============================================================================
 # FINAL VERIFICATION SUMMARY
 # =============================================================================
 section "Final Verification Summary"
@@ -901,9 +1114,10 @@ set -eu
 # 2. uv / uvx — installed to /usr/local/bin (system-wide)
 export PATH="/usr/local/bin:$PATH"
 
-# 3. Java & Maven (already exported above, but re-assert in case of subshell)
+# 3. Java, Maven & Kafka (already exported above, but re-assert in case of subshell)
 [ -n "${JAVA_HOME:-}" ]  && export PATH="$JAVA_HOME/bin:$PATH"
 [ -n "${MAVEN_HOME:-}" ] && export PATH="$MAVEN_HOME/bin:$PATH"
+[ -d /opt/kafka/bin ]    && export KAFKA_HOME=/opt/kafka && export PATH="/opt/kafka/bin:$PATH"
 
 # 4. /usr/local/bin (docker-compose symlink, postman, chrome wrapper)
 export PATH="/usr/local/bin:$PATH"
@@ -932,6 +1146,13 @@ check_tool "google-chrome-stable" "google-chrome-stable --version" || true
 check_tool "postman"              "postman --version"          || true
 check_tool "vtsls"                "vtsls --version"            || true
 check_tool "typescript-language-server" "typescript-language-server --version" || true
+check_tool "zip"                  "zip --version | head -2 | tail -1" || true
+check_tool "shellcheck"           "shellcheck --version | grep version:" || true
+check_tool "psql"                 "psql --version"             || true
+check_tool "k6"                   "k6 version"                 || true
+check_tool "kafka-topics.sh"      "kafka-topics.sh --version"  || true
+check_tool "playwright"           "playwright --version"       || true
+check_tool "openspec"             "openspec --version"         || true
 # jdtls --version blocks (starts daemon) — verify via symlink + plugin dir
 if [[ -L /usr/local/bin/jdtls ]] && [[ -d /opt/jdtls/plugins ]]; then
   JDTLS_VER=$(find /opt/jdtls/plugins -name "org.eclipse.jdt.ls.core_*.jar" \
@@ -943,9 +1164,15 @@ else
 fi
 
 echo ""
+echo -e "${CYAN}MCP servers registered in Claude (user scope):${NC}"
+sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp list 2>/dev/null \
+  || warn "Could not list MCP servers (run 'claude mcp list' manually)."
+
+echo ""
 echo -e "${CYAN}Environment variables set:${NC}"
 echo "  JAVA_HOME  = ${JAVA_HOME:-<not set>}"
 echo "  MAVEN_HOME = ${MAVEN_HOME:-<not set>}"
+echo "  KAFKA_HOME = ${KAFKA_HOME:-<not set>}"
 echo "  NVM_DIR    = ${NVM_DIR:-<not set>}"
 
 echo ""
@@ -1064,6 +1291,16 @@ echo -e "  ${CYAN}── Other notes ──────────────�
 echo ""
 echo "  • Chrome (WSLg):  chrome  or  google-chrome-stable --no-sandbox"
 echo "  • Spec Kit:       uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>"
+echo "  • OpenSpec:       cd <project> && openspec init   (select 'Claude Code' when prompted)"
+echo "  • k6:             k6 run script.js"
+echo "  • Kafka CLI:      kafka-topics.sh --bootstrap-server localhost:9092 --list   (KAFKA_HOME=/opt/kafka)"
+echo "  • Playwright:     playwright test   |   playwright codegen <url>"
+echo ""
+echo -e "  ${CYAN}── MCP servers (Claude Code, user scope) ────────────────${NC}"
+echo ""
+echo "  Already registered globally — inspect with:  claude mcp list"
+echo "    • chrome-devtools  → npx chrome-devtools-mcp@latest"
+echo "    • playwright       → npx @playwright/mcp@latest"
 echo ""
 echo -e "  ${CYAN}── LSP servers (Claude Code) ────────────────────────────${NC}"
 echo ""
