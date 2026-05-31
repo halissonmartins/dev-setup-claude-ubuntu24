@@ -8,9 +8,9 @@
 #   GitHub CLI, Git, Claude Code, Docker + Compose, Chrome (WSLg),
 #   Postman CLI, GitHub Spec Kit (specify CLI via uvx),
 #   ZIP, ShellCheck, PostgreSQL client (PGDG), k6 (load testing),
-#   Kafka CLI (Apache), Playwright CLI + Chromium, OpenSpec CLI,
+#   Kafka CLI (Apache), Playwright CLI + Chromium, OpenSpec CLI, Tmux,
 #   Chrome DevTools MCP server, and MCP servers registered into Claude
-#   (chrome-devtools + playwright, user scope)
+#   (chrome-devtools + playwright + context7, user scope)
 # =============================================================================
 
 set -euo pipefail
@@ -119,6 +119,7 @@ check_url "Playwright (npm)"                   "https://registry.npmjs.org/playw
 check_url "Playwright MCP (npm)"               "https://registry.npmjs.org/@playwright/mcp"
 check_url "Chrome DevTools MCP (npm)"          "https://registry.npmjs.org/chrome-devtools-mcp"
 check_url "OpenSpec (npm)"                     "https://registry.npmjs.org/@fission-ai/openspec"
+check_url "Context7 MCP (npm)"                 "https://registry.npmjs.org/@upstash/context7-mcp"
 
 # =============================================================================
 # 1. SYSTEM UPDATE & ESSENTIALS
@@ -539,7 +540,7 @@ npm install -g @anthropic-ai/claude-code
 check_tool "claude" "claude --version"
 
 # ── Define the CLAUDE.md generator here, but DO NOT run it yet. ───────────────
-# It is invoked LATER (section 23), after every tool has been installed, so the
+# It is invoked LATER (section 24), after every tool has been installed, so the
 # version strings it embeds are captured live and are always accurate.
 generate_claude_md() {
 CLAUDE_SETTINGS_DIR="${REAL_HOME}/.claude"
@@ -595,6 +596,7 @@ _k6_ver=$(k6          version 2>/dev/null | head -1 || echo "not found")
 _kafka_ver=$(kafka-topics.sh --version 2>/dev/null | head -1 || echo "not found")
 _playwright_ver=$(playwright --version 2>/dev/null || echo "not found")
 _openspec_ver=$(openspec --version 2>/dev/null || echo "not found")
+_tmux_ver=$(tmux -V 2>/dev/null || echo "not found")
 _install_date=$(date "+%Y-%m-%d")
 
 if [[ -f "$CLAUDE_MD_FILE" ]]; then
@@ -648,11 +650,13 @@ It describes the tools installed in this environment so you never need to ask.
 | kafka-topics.sh (Kafka CLI) | ${_kafka_ver} | Apache Kafka CLI tools at /opt/kafka (KAFKA_HOME) |
 | playwright | ${_playwright_ver} | E2E browser automation CLI + Chromium |
 | openspec | ${_openspec_ver} | OpenSpec CLI — run 'openspec init' (select Claude Code) per project |
+| tmux | ${_tmux_ver} | terminal multiplexer (apt) |
 
 ## MCP servers (Claude Code, user scope)
 
 - chrome-devtools — \`npx chrome-devtools-mcp@latest\` (Chrome DevTools automation)
 - playwright — \`npx @playwright/mcp@latest\` (Playwright browser automation)
+- context7 — \`npx @upstash/context7-mcp\` (up-to-date library docs; no API key by default — add one for higher rate limits)
 - Inspect with: \`claude mcp list\`
 
 ## Environment variables
@@ -1088,9 +1092,22 @@ check_tool "openspec" "openspec --version"
 log "Per project, run 'openspec init' (select 'Claude Code') to wire OpenSpec into Claude."
 
 # =============================================================================
-# 22. MCP SERVERS — Chrome DevTools + Playwright (registered into Claude)
+# 22. TMUX (terminal multiplexer)
 # =============================================================================
-section "22. MCP servers (chrome-devtools + playwright)"
+section "22. Tmux (terminal multiplexer)"
+
+log "Installing tmux via apt..."
+sudo apt install -y tmux
+
+check_tool "tmux" "tmux -V"
+
+# =============================================================================
+# 23. MCP SERVERS — Chrome DevTools + Playwright + Context7 (registered into Claude)
+# =============================================================================
+section "23. MCP servers (chrome-devtools + playwright + context7)"
+
+# context7 is registered over local stdio (npx) — no API key is configured here.
+# It works rate-limited out of the box; a key can be added later (see notes).
 
 # Ensure NVM is active so node/npm/npx are available
 export NVM_DIR="/opt/nvm"
@@ -1101,6 +1118,9 @@ set -eu
 
 log "Installing Chrome DevTools MCP server globally..."
 npm install -g chrome-devtools-mcp
+
+log "Installing Context7 MCP server globally..."
+npm install -g @upstash/context7-mcp
 
 # Register both MCP servers at USER scope so they are available in every project.
 # Run as REAL_USER with the right HOME so the config lands in REAL_HOME/.claude.json
@@ -1116,14 +1136,24 @@ sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp add --scope user \
   && success "MCP 'playwright' registered (user scope)." \
   || warn "MCP 'playwright' already registered or registration failed (non-fatal)."
 
+# Context7 — up-to-date library docs, registered over local stdio (npx), matching
+# the chrome-devtools/playwright pattern above. It is registered WITHOUT an API
+# key (works rate-limited out of the box). To raise the rate limits, the user
+# re-registers later with their own key — see the post-install notes.
+log "Registering Context7 MCP server into Claude (user scope, npx stdio)..."
+sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp add --scope user \
+  context7 -- npx -y @upstash/context7-mcp 2>/dev/null \
+  && success "MCP 'context7' registered (user scope, no API key — rate-limited; add a key later, see notes)." \
+  || warn "MCP 'context7' already registered or registration failed (non-fatal)."
+
 sudo -u "$REAL_USER" HOME="$REAL_HOME" claude mcp list 2>/dev/null || true
 
 # =============================================================================
-# 23. GLOBAL CLAUDE.md (generated AFTER all tools are installed)
+# 24. GLOBAL CLAUDE.md (generated AFTER all tools are installed)
 # =============================================================================
-section "23. Global CLAUDE.md"
+section "24. Global CLAUDE.md"
 
-# Now that every tool (sections 1–22) is installed, generate the global
+# Now that every tool (sections 1–23) is installed, generate the global
 # CLAUDE.md. Re-assert the full PATH first so each freshly installed tool
 # resolves and its LIVE version is captured inside generate_claude_md().
 export NVM_DIR="/opt/nvm"
@@ -1196,6 +1226,7 @@ check_tool "k6"                   "k6 version"                 || true
 check_tool "kafka-topics.sh"      "kafka-topics.sh --version"  || true
 check_tool "playwright"           "playwright --version"       || true
 check_tool "openspec"             "openspec --version"         || true
+check_tool "tmux"                 "tmux -V"                    || true
 # jdtls --version blocks (starts daemon) — verify via symlink + plugin dir
 if [[ -L /usr/local/bin/jdtls ]] && [[ -d /opt/jdtls/plugins ]]; then
   JDTLS_VER=$(find /opt/jdtls/plugins -name "org.eclipse.jdt.ls.core_*.jar" \
@@ -1329,6 +1360,17 @@ echo "       (generate one at: postman.com/settings/me/api-keys)"
 echo "     • Verify:  postman whoami"
 echo ""
 
+echo -e "  ${GREEN}▶  Context7 MCP (optional API key — higher rate limits)${NC}"
+echo "     • The context7 MCP server is already registered and works WITHOUT a key"
+echo "       (rate-limited). Add your own key to raise the limits:"
+echo "     • Get a free key at:  https://context7.com/dashboard"
+echo "     • Re-register the server with your key:"
+echo "         claude mcp remove context7 -s user 2>/dev/null"
+echo "         claude mcp add --scope user context7 -- \\"
+echo "           npx -y @upstash/context7-mcp --api-key <YOUR_KEY>"
+echo "     • Verify:  claude mcp list"
+echo ""
+
 # ── Other notes ───────────────────────────────────────────────────────────────
 echo -e "  ${CYAN}── Other notes ──────────────────────────────────────────${NC}"
 echo ""
@@ -1338,12 +1380,14 @@ echo "  • OpenSpec:       cd <project> && openspec init   (select 'Claude Code
 echo "  • k6:             k6 run script.js"
 echo "  • Kafka CLI:      kafka-topics.sh --bootstrap-server localhost:9092 --list   (KAFKA_HOME=/opt/kafka)"
 echo "  • Playwright:     playwright test   |   playwright codegen <url>"
+echo "  • Tmux:           tmux   (new session)   |   tmux attach   (reattach)"
 echo ""
 echo -e "  ${CYAN}── MCP servers (Claude Code, user scope) ────────────────${NC}"
 echo ""
 echo "  Already registered globally — inspect with:  claude mcp list"
 echo "    • chrome-devtools  → npx chrome-devtools-mcp@latest"
 echo "    • playwright       → npx @playwright/mcp@latest"
+echo "    • context7         → npx @upstash/context7-mcp (no API key by default; add one for higher limits)"
 echo ""
 echo -e "  ${CYAN}── LSP servers (Claude Code) ────────────────────────────${NC}"
 echo ""
