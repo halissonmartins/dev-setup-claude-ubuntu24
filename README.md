@@ -1,4 +1,4 @@
-# dev-setup-claude-ubuntu24
+# AI-Ready Dev Environment for Ubuntu 24.04
 
 One script to provision a complete, **AI-assisted development environment** on Ubuntu 24.04 — ready to run on a **VPS**, inside **WSL2**, or in a **Docker** container.
 
