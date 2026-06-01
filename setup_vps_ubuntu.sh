@@ -119,8 +119,7 @@ check_url "TypeScript LSP (vtsls npm)"         "https://registry.npmjs.org/@vtsl
 check_url "Java LSP (jdtls snapshot)"          "http://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz"
 check_url "PostgreSQL PGDG signing key"        "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
 check_url "PostgreSQL PGDG apt repo"           "https://apt.postgresql.org/pub/repos/apt/"
-check_url "Grafana k6 GPG key"                 "https://dl.k6.io/key.gpg"
-check_url "Grafana k6 apt repo"                "https://dl.k6.io/deb/"
+check_url "Grafana k6 (GitHub releases)"       "https://github.com/grafana/k6/releases/latest"
 check_url "Apache Kafka CDN"                   "https://dlcdn.apache.org/kafka/"
 check_url "Playwright (npm)"                   "https://registry.npmjs.org/playwright"
 check_url "Playwright MCP (npm)"               "https://registry.npmjs.org/@playwright/mcp"
@@ -654,7 +653,7 @@ It describes the tools installed in this environment so you never need to ask.
 | zip | ${_zip_ver} | archive utilities (apt; unzip also installed) |
 | shellcheck | ${_shellcheck_ver} | shell script linter (apt) |
 | psql | ${_psql_ver} | PostgreSQL client (PGDG repo) |
-| k6 | ${_k6_ver} | load testing CLI (Grafana repo) |
+| k6 | ${_k6_ver} | load testing CLI — ARM64 binary from GitHub releases (apt repo has no arm64) |
 | kafka-topics.sh (Kafka CLI) | ${_kafka_ver} | Apache Kafka CLI tools at /opt/kafka (KAFKA_HOME) |
 | playwright | ${_playwright_ver} | E2E browser automation CLI + Chromium (shared at /opt/ms-playwright) |
 | openspec | ${_openspec_ver} | OpenSpec CLI — run 'openspec init' (select Claude Code) per project |
@@ -972,25 +971,75 @@ sudo apt install -y postgresql-client
 check_tool "psql" "psql --version"
 
 # =============================================================================
-# 18. K6 (load testing CLI) via official Grafana apt repository
+# 18. K6 (load testing CLI) — official ARM64 binary from GitHub releases
 # =============================================================================
 section "18. k6 (load testing CLI)"
 
-log "Adding Grafana k6 repository..."
-curl -fsSL https://dl.k6.io/key.gpg \
-  | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
-  | sudo tee /etc/apt/sources.list.d/k6.list > /dev/null
+# The Grafana k6 apt repo (dl.k6.io/deb) only ships amd64/i386 — there is NO
+# arm64 package — so on an ARM VPS we install the official ARM64 binary straight
+# from GitHub releases. This is the SAME k6: existing k6 JS scripts (k6/http,
+# k6/metrics, ...) run unchanged. Other JS load-test tools (Artillery, etc.) are
+# NOT drop-in replacements for k6 scripts, so we stay on k6 itself.
+K6_ARCH="$(dpkg --print-architecture)"   # arm64 on this VPS
 
-sudo apt update -y
-# k6 publishes arm64 debs, but guard the install so a missing arch can't abort
-# the whole script under 'set -e'.
-if sudo apt install -y k6; then
-  check_tool "k6" "k6 version"
+log "Fetching latest k6 version number..."
+# Strategy 1: GitHub releases API (primary source)
+K6_VERSION=$(curl -fsSL --max-time 15 \
+  "https://api.github.com/repos/grafana/k6/releases/latest" 2>/dev/null \
+  | grep '"tag_name"' \
+  | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+# Strategy 2: hard-coded known-good latest (last resort if the API is rate-limited)
+if [[ -z "$K6_VERSION" ]]; then
+  warn "Could not auto-detect k6 version; using v2.0.0 as fallback"
+  K6_VERSION="v2.0.0"
+fi
+
+# Validate K6_VERSION is a safe 'vX.Y.Z' tag before using it in a URL/filename
+if [[ ! "$K6_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  warn "k6 version '$K6_VERSION' has unexpected format; falling back to v2.0.0"
+  K6_VERSION="v2.0.0"
+fi
+log "Installing k6 ${K6_VERSION} (linux-${K6_ARCH}) from GitHub releases..."
+
+K6_TGZ="k6-${K6_VERSION}-linux-${K6_ARCH}.tar.gz"
+K6_BASE="https://github.com/grafana/k6/releases/download/${K6_VERSION}"
+K6_URL="${K6_BASE}/${K6_TGZ}"
+K6_SHA_URL="${K6_BASE}/k6-${K6_VERSION}-checksums.txt"
+check_url "k6 binary" "$K6_URL"
+
+K6_TMP=$(mktemp /tmp/k6.XXXXXX.tar.gz)
+K6_SHA_TMP=$(mktemp /tmp/k6.XXXXXX.checksums)
+if wget -qO "$K6_TMP" "$K6_URL" && wget -qO "$K6_SHA_TMP" "$K6_SHA_URL"; then
+  log "Verifying k6 SHA256 checksum..."
+  # checksums.txt holds lines of "<sha256>  <filename>" — match our tarball's row.
+  EXPECTED_SHA=$(awk -v f="$K6_TGZ" '$2==f {print $1}' "$K6_SHA_TMP")
+  ACTUAL_SHA=$(sha256sum "$K6_TMP" | awk '{print $1}')
+  if [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+    error "k6 SHA256 mismatch! Skipping k6 install to avoid a corrupted binary."
+    error "  Expected: ${EXPECTED_SHA:-<not found in checksums.txt>}"
+    error "  Got:      $ACTUAL_SHA"
+    record_fail "k6"
+  else
+    success "k6 checksum verified."
+    # Tarball top dir is k6-<ver>-linux-<arch>/ containing the 'k6' binary;
+    # --strip-components=1 drops that dir so the binary lands directly in tmp.
+    K6_EXTRACT=$(mktemp -d /tmp/k6.XXXXXX)
+    tar -xzf "$K6_TMP" -C "$K6_EXTRACT" --strip-components=1
+    if [[ -f "$K6_EXTRACT/k6" ]]; then
+      sudo install -m 0755 "$K6_EXTRACT/k6" /usr/local/bin/k6
+      check_tool "k6" "k6 version"
+    else
+      error "k6 binary not found inside the downloaded tarball."
+      record_fail "k6"
+    fi
+    rm -rf "$K6_EXTRACT"
+  fi
 else
-  warn "k6 apt install failed (arm64 package may be unavailable) — skipping."
+  warn "Could not download k6 ${K6_VERSION} for ${K6_ARCH} — skipping."
   record_fail "k6"
 fi
+rm -f "$K6_TMP" "$K6_SHA_TMP"
 
 # =============================================================================
 # 19. KAFKA CLI (Apache Kafka binary — command-line tools)
