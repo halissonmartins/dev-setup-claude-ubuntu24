@@ -1,0 +1,8 @@
+# Shell scripts target Linux and must always be checked out with LF line
+# endings — even when this repo is cloned or edited on Windows. CRLF in the
+# shebang line causes "/usr/bin/env: 'bash\r': No such file or directory".
+*.sh text eol=lf
+
+# Let Git auto-detect text vs binary for everything else and normalize to LF
+# in the repository, converting on checkout per the platform's defaults.
+* text=auto
