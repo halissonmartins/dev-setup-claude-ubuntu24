@@ -6,7 +6,8 @@ The goal is simple: go from a bare Ubuntu 24.04 system to a fully equipped works
 
 > [!NOTE]
 > This README describes **what the project is and what it installs**. For step-by-step
-> setup instructions, see **[docs/INSTRUCTION-WSL.md](docs/INSTRUCTION-WSL.md)** (WSL2).
+> setup instructions, see **[docs/INSTRUCTION-WSL.md](docs/INSTRUCTION-WSL.md)** (WSL2)
+> or **[docs/INSTRUCTION-VPS.md](docs/INSTRUCTION-VPS.md)** (VPS).
 
 ## Why this exists
 
@@ -98,7 +99,8 @@ Everything is pinned to the **latest available version** at install time and ver
 | Target | Guide |
 |---|---|
 | **WSL2** | [docs/INSTRUCTION-WSL.md](docs/INSTRUCTION-WSL.md) — import Ubuntu 24.04, create the `dev` user, run the setup script, authenticate. |
-| **VPS / Docker** | Copy `create_user.sh` and `setup_wsl_ubuntu.sh` to the host, then run `./create_user.sh` (as root) followed by `sudo ./setup_wsl_ubuntu.sh` (as `dev`). |
+| **VPS** | [docs/INSTRUCTION-VPS.md](docs/INSTRUCTION-VPS.md) — copy `setup_vps_ubuntu.sh` to the host over SSH, make it executable, run it as `ubuntu`, reboot, authenticate. |
+| **Docker** | Copy `create_user.sh` and `setup_wsl_ubuntu.sh` to the host, then run `./create_user.sh` (as root) followed by `sudo ./setup_wsl_ubuntu.sh` (as `dev`). |
 
 ## Design principles
 
